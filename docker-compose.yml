@@ -22,7 +22,7 @@ services:
        - "8089:8089"
      volumes:
        - ./locustfiles:/mnt/locust
-     command: -f /mnt/locust/locustfile.py --host=http://api-gateway:8080
+     command: -f /mnt/locust/experiments/locustfile_read_and_write.py --host=http://store_manager:5000
      depends_on:
       - store_manager
      networks:
@@ -57,8 +57,6 @@ services:
       MYSQL_PASSWORD: labo05
     networks:
       - labo05-network
-    ports:
-      - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./db-init:/docker-entrypoint-initdb.d
@@ -74,8 +72,6 @@ services:
     restart: unless-stopped
     networks:
       - labo05-network
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 1m

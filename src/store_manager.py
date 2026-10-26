@@ -4,6 +4,7 @@ SPDX - License - Identifier: LGPL - 3.0 - or -later
 Auteurs : Gabriel C. Ullmann, Fabio Petrillo, 2025
 """
 import threading
+import time
 from graphene import Schema
 from stocks.schemas.query import Query
 from flask import Flask, request, jsonify
@@ -127,6 +128,15 @@ def put_orders():
 @app.route("/metrics")
 def metrics():
     return generate_latest(), 200, {"Content-Type": CONTENT_TYPE_LATEST}
+
+# Endpoint for testing rate limiting
+@app.get('/test/slow/<int:delay_seconds>')
+def test_slow_endpoint(delay_seconds):
+    """Endpoint pour tester les timeouts"""
+    time.sleep(delay_seconds)
+    return {
+        "message": f"Response after {delay_seconds} seconds"
+    }, 200
 
 # Start Flask app
 if __name__ == '__main__':

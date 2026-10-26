@@ -9,12 +9,20 @@ data:
   DB_HOST: mysql
   DB_PORT: "3306"
   DB_USER: labo05
-  DB_PASSWORD: labo05
   DB_NAME: labo05_db
   REDIS_HOST: redis
   REDIS_PORT: "6379"
   REDIS_DB: "0"
-  KAFKA_HOST: ""
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: store-db-secret
+type: Opaque
+stringData:
+  DB_PASSWORD: labo05
+  MYSQL_ROOT_PASSWORD: root
 
 ---
 # ============================================================
@@ -37,6 +45,8 @@ metadata:
   name: mysql
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: mysql
@@ -50,13 +60,19 @@ spec:
           image: mysql:8.4.7
           env:
             - name: MYSQL_ROOT_PASSWORD
-              value: root
+              valueFrom:
+                secretKeyRef:
+                  name: store-db-secret
+                  key: MYSQL_ROOT_PASSWORD
             - name: MYSQL_DATABASE
               value: labo05_db
             - name: MYSQL_USER
               value: labo05
             - name: MYSQL_PASSWORD
-              value: labo05
+              valueFrom:
+                secretKeyRef:
+                  name: store-db-secret
+                  key: DB_PASSWORD
           ports:
             - containerPort: 3306
           volumeMounts:
@@ -151,11 +167,17 @@ spec:
           # TODO: remplacez par VOTRE image publiee sur GHCR
           #       ex. ghcr.io/<votre-username>/<votre-depot>:latest
           #       Le paquet doit etre public, sinon voir imagePullSecrets dans kubernetes.md
-          image: nkinesis/store-manager:latest
+          image: ghcr.io/picodoux/log430-labo5-a26:latest
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
                 name: app-config
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: store-db-secret
+                  key: DB_PASSWORD
           ports:
             - containerPort: 5000
 

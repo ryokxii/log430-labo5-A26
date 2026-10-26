@@ -61,6 +61,17 @@
           ]
         }
       ]
+    },
+    {
+      "endpoint": "/store-manager-api/test/slow/{delay}",
+      "method": "GET",
+      "backend": [
+        {
+          "url_pattern": "/test/slow/{delay}",
+          "host": ["http://store_manager:5000"],
+          "timeout": "5s"
+        }
+      ]
     }
   ]
 }

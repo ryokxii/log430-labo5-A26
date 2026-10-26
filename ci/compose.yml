@@ -1,0 +1,97 @@
+# Disposable integration stack used only on the GitHub-hosted CI machine.
+# No host ports, external network, local .env, or school cluster access.
+services:
+  mysql:
+    image: mysql:8.4.7
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: labo05_db
+      MYSQL_USER: labo05
+      MYSQL_PASSWORD: labo05
+    volumes:
+      - store-ci-data:/var/lib/mysql
+      - ../db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+
+  mysql_payments:
+    image: mysql:8.4.7
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: labo05_payments_db
+      MYSQL_USER: labo05
+      MYSQL_PASSWORD: labo05
+    volumes:
+      - payment-ci-data:/var/lib/mysql
+      - ./peer-db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+
+  redis:
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  store_manager:
+    image: ${STORE_IMAGE:-ghcr.io/picodoux/log430-labo5-a26:latest}
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: labo05_db
+      DB_USER: labo05
+      DB_PASSWORD: labo05
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health-check', timeout=3)"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  payments_api:
+    image: ${PAYMENT_IMAGE:-ghcr.io/picodoux/log430-labo5-payment:latest}
+    environment:
+      DB_HOST: mysql_payments
+      DB_PORT: "3306"
+      DB_NAME: labo05_payments_db
+      DB_USER: labo05
+      DB_PASSWORD: labo05
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      mysql_payments:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5009/', timeout=3)"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  api-gateway:
+    image: devopsfaith/krakend:2.7
+    volumes:
+      - ../config/krakend.json:/etc/krakend/krakend.json:ro
+    depends_on:
+      store_manager:
+        condition: service_healthy
+      payments_api:
+        condition: service_healthy
+
+volumes:
+  store-ci-data:
+  payment-ci-data:

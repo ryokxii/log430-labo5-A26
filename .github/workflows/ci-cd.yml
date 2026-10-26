@@ -1,0 +1,107 @@
+name: CI CD Store Manager
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: labo05-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/picodoux/log430-labo5-a26
+
+jobs:
+  ci:
+    name: Build tests et publication GHCR
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: ci-${{ github.run_id }}-${{ github.run_attempt }}
+      STORE_IMAGE: ghcr.io/picodoux/log430-labo5-a26:${{ github.sha }}
+    outputs:
+      image: ${{ steps.image.outputs.ref }}
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Verifier les configurations JSON
+        shell: bash
+        run: |
+          python3 -m json.tool config/krakend.json > /dev/null
+          python3 -m json.tool config/krakend-k8s.json > /dev/null
+
+      - name: Construire l image du commit
+        id: image
+        shell: bash
+        run: |
+          IMAGE="${IMAGE_NAME}:${GITHUB_SHA}"
+          docker build \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            -t "$IMAGE" .
+          docker run --rm "$IMAGE" python -m compileall -q /app/src
+          echo "ref=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Demarrer les dependances de test
+        shell: bash
+        run: docker compose -f ci/compose.yml up -d --wait --wait-timeout 240
+
+      - name: Executer les tests pytest existants
+        shell: bash
+        run: docker compose -f ci/compose.yml exec -T store_manager python -m pytest -q tests
+
+      - name: Verifier commande paiement et retour vers Store Manager
+        shell: bash
+        run: docker compose -f ci/compose.yml exec -T store_manager python - < ci/smoke.py
+
+      - name: Publier l image validee sur GHCR
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          if [ -z "$GHCR_TOKEN" ]; then
+            echo "::error::Ajouter le secret Actions GHCR_TOKEN du compte picodoux."
+            exit 1
+          fi
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u picodoux --password-stdin
+          docker push "${IMAGE_NAME}:${GITHUB_SHA}"
+          docker tag "${IMAGE_NAME}:${GITHUB_SHA}" "${IMAGE_NAME}:latest"
+          docker push "${IMAGE_NAME}:latest"
+
+      - name: Afficher les journaux en cas d echec
+        if: failure()
+        shell: bash
+        run: docker compose -f ci/compose.yml logs --no-color --tail=100
+
+      - name: Nettoyer seulement la pile CI isolee
+        if: always()
+        shell: bash
+        run: docker compose -f ci/compose.yml down --volumes --remove-orphans
+
+  deploy:
+    name: Deploiement ETS et verification fonctionnelle
+    needs: ci
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Windows, X64, log430-ets]
+    timeout-minutes: 15
+    env:
+      KUBE_CONTEXT: etudiant_37@log430
+      KUBE_NAMESPACE: log430-espace-etudiant-10
+      DEPLOY_IMAGE: ${{ needs.ci.outputs.image }}
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Appliquer les ConfigMaps et le manifeste puis tester le flux
+        shell: powershell
+        run: |
+          & .\ci\deploy.ps1 -Component store -Image $env:DEPLOY_IMAGE -KubeContext $env:KUBE_CONTEXT -Namespace $env:KUBE_NAMESPACE
