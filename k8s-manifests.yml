@@ -154,6 +154,7 @@ metadata:
   name: store-manager
 spec:
   replicas: 1
+  minReadySeconds: 5
   selector:
     matchLabels:
       app: store-manager
@@ -180,6 +181,14 @@ spec:
                   key: DB_PASSWORD
           ports:
             - containerPort: 5000
+          readinessProbe:
+            httpGet:
+              path: /health-check
+              port: 5000
+            initialDelaySeconds: 2
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
 
 ---
 apiVersion: v1

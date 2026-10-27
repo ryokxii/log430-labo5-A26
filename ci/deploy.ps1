@@ -86,9 +86,36 @@ try {
         Invoke-Log430Kubectl -Arguments @('rollout', 'status', "deployment/$Log430Deployment", '--timeout=180s')
     }
 
+    # Select the current image on a Ready Pod, excluding Pods being terminated.
+    # kubectl exec deployment/... may otherwise select an old Pod during rollout.
+    $Log430StoreImage = Invoke-Log430Kubectl -Capture -Arguments @(
+        'get', 'deployment', 'store-manager', '-o', 'jsonpath={.spec.template.spec.containers[0].image}'
+    )
+    $Log430StorePodsJson = Invoke-Log430Kubectl -Capture -Arguments @(
+        'get', 'pods', '-l', 'app=store-manager', '-o', 'json'
+    )
+    $Log430StorePods = @(
+        ($Log430StorePodsJson | ConvertFrom-Json).items |
+            Where-Object { $_.status.phase -eq 'Running' } |
+            Where-Object {
+                $deletion = $_.metadata.PSObject.Properties['deletionTimestamp']
+                $ready = @($_.status.conditions | Where-Object {
+                    $_.type -eq 'Ready' -and $_.status -eq 'True'
+                }).Count -gt 0
+                ($null -eq $deletion -or $null -eq $deletion.Value) -and
+                    $_.spec.containers[0].image -eq $Log430StoreImage -and $ready
+            } |
+            Sort-Object -Property { $_.metadata.creationTimestamp } -Descending
+    )
+    if ($Log430StorePods.Count -eq 0) {
+        throw 'No active Ready Store Manager Pod matches the deployed image.'
+    }
+    $Log430SmokePod = $Log430StorePods[0].metadata.name
+    Write-Host "Running the functional check in Pod $Log430SmokePod ($Log430StoreImage)"
+
     # Exactly one functional order/payment check. No Locust load on the cluster.
     $Log430Smoke = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'smoke.py'))
-    $Log430Smoke | & kubectl @Log430KubeArguments exec -i deployment/store-manager -- python - `
+    $Log430Smoke | & kubectl @Log430KubeArguments exec -i $Log430SmokePod -c store-manager -- python - `
         --store http://store-manager:5000 --payment http://payments-api:5009 --gateway http://api-gateway:8080
     if ($LASTEXITCODE -ne 0) { throw 'The deployed order/payment flow failed.' }
 
@@ -101,10 +128,10 @@ try {
     & kubectl @Log430KubeArguments get pods
     & kubectl @Log430KubeArguments get events --sort-by=.lastTimestamp | Select-Object -Last 15
     if ($Component -eq 'store') {
-        & kubectl @Log430KubeArguments logs deployment/store-manager --tail=60
-        & kubectl @Log430KubeArguments logs deployment/api-gateway --tail=60
+        & kubectl @Log430KubeArguments logs -l app=store-manager --all-containers=true --prefix=true --tail=60
+        & kubectl @Log430KubeArguments logs -l app=api-gateway --all-containers=true --prefix=true --tail=60
     } else {
-        & kubectl @Log430KubeArguments logs deployment/payments-api --tail=60
+        & kubectl @Log430KubeArguments logs -l app=payments-api --all-containers=true --prefix=true --tail=60
     }
     throw $Log430Failure
 } finally {
