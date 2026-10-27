@@ -102,6 +102,8 @@ jobs:
           persist-credentials: false
 
       - name: Appliquer les ConfigMaps et le manifeste puis tester le flux
-        shell: powershell
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "{0}"
         run: |
+          $ErrorActionPreference = 'Stop'
           & .\ci\deploy.ps1 -Component store -Image $env:DEPLOY_IMAGE -KubeContext $env:KUBE_CONTEXT -Namespace $env:KUBE_NAMESPACE
+          if (Test-Path -LiteralPath variable:\LASTEXITCODE) { exit $LASTEXITCODE }
